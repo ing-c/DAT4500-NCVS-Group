@@ -1,0 +1,752 @@
+---
+title: "National Crime Victimization Survey"
+author: "Ben Bitnes, Carissa Ing, Chelsea Metzger, Kim Tran"
+date: "`r Sys.Date()`"
+output: openintro::lab_report
+---
+###### Note: To run the following code on your device, you must download the datasets DS2, DS3, and DS4 from the 2020 and 2018 surveys each and have them in your working directory. The National Archive of Criminal Justice Data requires the user to create an account before downloading.
+
+```{r load-packages, echo=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(scales)
+library(patchwork)
+```
+
+```{r, include=FALSE, warning=FALSE}
+### LOAD DATASETS
+load("38090-0002-Data.rda")
+load("38090-0003-Data.rda")
+load("38090-0004-Data.rda")
+
+load("37297-0002-Data.rda")
+load("37297-0003-Data.rda")
+load("37297-0004-Data.rda")
+```
+
+```{r, include=FALSE, warning=FALSE}
+###FUNCTIONS TO TIDY DATA SETS
+tidy_hh_data <- function(df) {
+  
+  # < $50,000
+  low_income <- c("< 5,000", "5,000-7,499", "7,500-9,999", "10,000-12,499", "12,500-14,999", "15,000-17,499", "17,500-19,999", "20,000-24,999", "25,000-29,999", "30,000-34,999", "35,000-39,999", "40,000-49,999")
+  
+  middle_income <- c("50,000-74,999", "$75,000 to $99,999", "$100,000-$149,999")
+  
+  # > $150,000
+  high_income <- c("$150,000-$199,999", "$200,000 or more")
+  
+  
+  df %>% 
+    select(YEARQ, IDHH, V2026) %>% 
+    rename("HHIncome" = "V2026") %>%
+    mutate(HHIncome = str_replace(HHIncome, "^\\S*", ""),
+           HHIncome = trimws(HHIncome),
+           HHIncomeRange = NA, 
+           HHIncomeRange = ifelse(HHIncome %in% low_income, "Low", HHIncomeRange),
+           HHIncomeRange = ifelse(HHIncome %in% middle_income, "Middle", HHIncomeRange),
+           HHIncomeRange = ifelse(HHIncome %in% high_income, "High", HHIncomeRange),
+           )
+}
+
+tidy_person_data <- function(df) {
+  age_cutpoints <- c(0, 18, 35, 60, 120)
+  age_labels <- c("under 18", "18-34", "35-59", "60 and up")
+  
+  multiRace <- c("White-Amer Ind", "White-Black", "White-Asian", "Black-Amer Ind",
+              "White-Black-American Ind", "White-Hawaiian", "Black-Asian",
+              "2 or 3 races", "White-Black-Asian", "4 or 5 races", "White-Amer Ind-Asian")
+  
+  df %>% 
+    select(
+    YEARQ, IDPER,
+    V3014, V3015, V3018, V3020:V3023A, V3024A, V3072
+    ) %>% 
+  rename(
+    "Age" = "V3014",
+    "MaritalStatus" = "V3015",
+    "Sex" = "V3018",
+    "EducationLevel" = "V3020",
+    "Race" = "V3023A",
+    "Hispanic" = "V3024A",
+    "EmployedLast6Months" = "V3072",
+  ) %>% 
+  mutate(Sex = str_replace(Sex, "^\\S* ", ""),
+         Race = str_replace(Race, "^\\S* ", ""),
+         Race = str_replace(Race, " only", ""),
+         Hispanic = str_replace(Hispanic, "^\\S* ", ""),
+         MaritalStatus = str_replace(MaritalStatus, "^\\S* ", ""),
+         EducationLevel = str_replace(EducationLevel, "^\\S* ", ""),
+         EmployedLast6Months = str_replace(EmployedLast6Months, "^\\S* ", "")
+         ) %>% 
+    mutate(Race = ifelse(Race %in% multiRace, "2+ Races", Race),
+           AgeRange = cut(Age, breaks = age_cutpoints, labels = age_labels)) %>% 
+    #Education Level
+    separate(EducationLevel, into = c("num", "Education1", "Education2"))%>% 
+    #drop_na() %>% 
+    mutate(EducationLevel = num,
+         EducationLevel = if_else(condition = (num == "1" | num == "2" |
+                                                 num == "3" | num == "4" |
+                                                 num == "5" | num =="6" |
+                                                 num == "7" | num == "8"),
+                                  true = "Elementary", false = EducationLevel),
+         EducationLevel = if_else(condition = (num == "9" | num == "10" |
+                                                 num == "11" | num == "12th"),
+                                  true = "High", false = EducationLevel),
+         EducationLevel = if_else(condition = (num == "Some"),
+                                  true = "Some College", false = EducationLevel),
+         EducationLevel = if_else(condition = (num == "Nev"),
+                                  true = "Never attended school", false = EducationLevel)) %>%
+    select(-num, -Education1, -Education2)
+}
+
+tidy_incident_data <- function(df) {
+  df %>% 
+    select(YEARQ, IDHH, IDPER, 
+         #Crime
+         V4065:V4075,
+         #Report
+         V4399, 
+         #Why Report
+         V4437,
+         #Why Not Report
+         V4422) %>% 
+  rename(
+      #Crime
+         "WasCrime" = "V4065",
+         "Theft" = "V4066",
+         "AttemptedTheft" = "V4067",
+         "AbusiveLanguage" = "V4068",
+         "SexContactWithForce" = "V4069",
+         "SexContactWithoutForce" = "V4070",
+         "ForcibleHomeEntry" = "V4071",
+         "ForcibleCarEntry" = "V4072",
+         "PropertyDamage" = "V4073",
+         "AttemptedPropertyDamage" = "V4074",
+         "OtherCrime" = "V4075",
+      #R = reasons why did report to police
+         "ReportedToPolice" = "V4399",
+         "R_MostImportantReport" = "V4437",
+      #NR = reasons why Not Report to Police
+         "NR_MostImportantNotReport" = "V4422") %>% 
+    mutate(ReportedToPolice = str_replace(ReportedToPolice, "^\\S* ", ""),
+           ReportedToPolice = factor(ReportedToPolice, levels = c("Yes", "No"))) %>% 
+    #Type of Crime
+    mutate(Personal = if_else(condition = (SexContactWithForce == "(1) Yes" |
+                                           SexContactWithoutForce == "(1) Yes" |
+                                           AbusiveLanguage == "(1) Yes"), 
+                          true = "(1) Yes", false = "(2) No"),
+         Property = if_else(condition = (Theft == "(1) Yes" | 
+                                           AttemptedTheft == "(1) Yes" |
+                                           ForcibleHomeEntry == "(1) Yes" |
+                                           ForcibleCarEntry == "(1) Yes" |
+                                           PropertyDamage == "(1) Yes" |
+                                           AttemptedPropertyDamage == "(1) Yes"), 
+                          true = "(1) Yes", false = "(2) No")
+         ) %>% 
+    pivot_longer(cols = c(Personal, Property, OtherCrime), names_to = "TypeOfCrime", values_to = "Present") %>% 
+    mutate(TypeOfCrime = if_else(condition = (Present == "(1) Yes"),
+                                 true = TypeOfCrime, false = NA)) %>% 
+    select(-(WasCrime:AttemptedPropertyDamage), -Present)
+}
+
+
+#COLOR SCHEME
+rep_col <- "#80b1d3"
+
+nonrep_col <- "#C00000"
+
+```
+
+```{r, include=FALSE, warning=FALSE}
+### CREATE DATASETS
+
+#2020
+household_20 <- da38090.0002
+person_20 <- da38090.0003
+incident_20 <- da38090.0004
+
+#2018
+household_18 <- da37297.0002
+person_18 <- da37297.0003
+incident_18 <- da37297.0004
+
+```
+
+```{r, include=FALSE, warning=FALSE}
+###TIDYING DATA
+
+#2020
+household_20 <- tidy_hh_data(household_20)
+person_20 <- tidy_person_data(person_20)
+incident_20 <- tidy_incident_data(incident_20)
+
+#2018
+household_18 <- tidy_hh_data(household_18)
+person_18 <- tidy_person_data(person_18)
+incident_18 <- tidy_incident_data(incident_18)
+
+
+###JOIN DATA
+incidents_and_demographics_20 <- left_join(incident_20, person_20, 
+                                           by=(c("YEARQ" = "YEARQ", "IDPER" = "IDPER"))) %>% 
+  left_join(household_20, by=(c("YEARQ" = "YEARQ", "IDHH" = "IDHH"))) %>%
+  filter(ReportedToPolice == "Yes" | ReportedToPolice == "No")
+
+incidents_and_demographics_18 <- left_join(incident_18, person_18, 
+                                           by=(c("YEARQ" = "YEARQ", "IDPER" = "IDPER"))) %>% 
+  left_join(household_18, by=(c("YEARQ" = "YEARQ", "IDHH" = "IDHH"))) %>%
+  filter(ReportedToPolice == "Yes" | ReportedToPolice == "No")
+
+```
+
+## Abstract
+
+We looked at the factors, mostly demographics of victims, to see if there was a relationship between them and non-reporting rates of crimes. We looked at the years 2018 and 2020. We did a comparison of the two years to see if there was a change in the factor and non-reporting relationship from year to year. We wanted to see if COVID played a role in non-reporting. We used both the proportions test and a chi-squared test to evaluate these questions. We found that age, employment status, and education played a role in non-reporting as well as the type of crime. Property crimes are less likely to be reported. Between 2018 and 20202, we found no overall change in non-reporting rates. However, there was a change in non-reporting for three demographic groups: the black community, the group with bachelor degrees, and those that are employed. 
+
+## Introduction
+
+# I think we should talk about the difference in number of crimes and non-reporting quanities between 2018 & 2020
+
+Our research question is, do certain factors contribute to the non-reporting rates of crimes and has COVID changed these factors? We focused primarily on the demographics of the victims such as age, race, ethnicity, employment status, income, and sex. We also looked at type of crime as an additional factor. For the factor analysis, we used chi-sqaure testing. We also compared the rates of non-reporting due to certain factors over the years 2018 and 2020. For the over time analysis, we used proportion testing. 
+
+```{r, echo=FALSE, warning=FALSE}
+### REPORTING RATES BETWEEN YEARS GRAPHS
+
+# 2018
+report_prop_18 <- ggplot(incidents_and_demographics_18, 
+                      aes(x=factor(ReportedToPolice), fill=ReportedToPolice)) +
+  geom_bar(show.legend = FALSE) +
+  scale_fill_manual(values=c(rep_col, nonrep_col)) +
+  labs(x = "2018", 
+       y = "Number of Incidents") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  geom_text(
+    stat = "count",
+    aes(y = after_stat(count),
+        label = after_stat(percent(count / sum(count)))),
+    fontface = "bold",
+    vjust = -0.5
+  ) +
+  stat_count(geom = "text", colour = "white", size = 4, 
+             aes(label = after_stat(count)),position=position_stack(vjust=0.5),
+             fontface = "bold")
+
+# 2020 
+report_prop_20 <- ggplot(incidents_and_demographics_20, 
+                      aes(x=factor(ReportedToPolice), fill=ReportedToPolice)) +
+  geom_bar() +
+  scale_fill_manual(values=c(rep_col, nonrep_col)) +
+  labs(x = "2020", 
+       y = " ") +
+  guides(fill=guide_legend(title="Reported to the Police")) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  geom_text(
+    stat = "count",
+    aes(y = after_stat(count),
+        label = after_stat(percent(count / sum(count)))),
+    fontface = "bold",
+    vjust = -0.5
+  ) +
+  stat_count(geom = "text", colour = "white", size = 4,
+             aes(label = after_stat(count)),position=position_stack(vjust=0.5),
+             fontface = "bold")
+
+# Combine the two graphs on the same scale
+report_prop_18 + report_prop_20 & 
+  plot_annotation(title = "Crime Reporting Rates (2018 v. 2020)",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_continuous(limits = c(0, 22000))
+
+```
+
+## Methods
+
+  For our research project we used the National Crime Victimization Survey (NCVS) Series from 2020 and 2018. The sources are as follows: 
+  
+  1) United States. Bureau of Justice Statistics. National Crime Victimization Survey, [United States], 2020. Inter-university Consortium for Political and Social Research [distributor], 2021-10-18. [https://doi.org/10.3886/ICPSR38090.v1](https://doi.org/10.3886/ICPSR38090.v1)
+  
+  2) United States. Bureau of Justice Statistics. National Crime Victimization Survey, [United States], 2018. Inter-university Consortium for Political and Social Research [distributor], 2020-02-27. [https://doi.org/10.3886/ICPSR37297.v1](https://doi.org/10.3886/ICPSR37297.v1)
+  
+  The NCVS have been collecting data on victims through an ongoing survey of a nationally-representative sample of residential addresses. They have been collecting data since 1973. The NCVS was designed for four objectives: to develop detailed information about the victims and crimes, to estimate the number and types of crimes not reported to the police, to provide uniform measures of crimes, and to compare crimes over time and in certain areas. 
+  
+  Each respondent is asked a series of questions to see if they were victimized during the six-month period preceding the first day of the month of the interview. A household respondent also reports on crimes against the household. The data include type of crime, month, time, and location of the crime, relationship between victim and offender, characteristics of the offender, self-protective actions taken by the victim during the incident and results of those actions, consequences of the victimization, type of property lost, whether the crime was reported to police and reasons for reporting or not reporting, and offender use of weapons, drugs, and alcohol. Basic demographic information such as age, race, gender, and income is also collected, to analyze sub populations. We used the versions of the NCVS from the 12 months of 2020 and the 12 months of 2018.
+  
+  Each Year has 5 data sets: Address Record-Type, Household Record-Type, Person Record-Type, Incident Record-Type, and the Collection Year Incident-Level. The Incident-Level data set was created from the Record-Type files and includes information on victims of crime; non-victims are not included though they are included in the other data sets. A crime incident is included based on when the interview was conducted, not on when the crime occurred.
+  
+  The principal investigator of the survey is the United States Bureau of Justice Statistics. The data were collected by the United States Department of Commerce, Bureau of the Census. The sample was a stratified multistage cluster sample. All persons in the United States and the District of Columbia age 12 or older are included in the universe. People who are crews of vessels, in institutions, or members of the armed forces living in barracks are excluded from the survey. The units of observation are crime incidents, individuals, and households. The mode of data collection was computer-assisted personal interview, telephone interviews, and face-to-face interviews. 
+  
+  The NCVS sample consists of approximately 200,000 housing units. The sample is drawn from the decennial census. The sample was selected in two stages. The first step divided the United States into 1,987 sample units consisting of large metropolitan areas, counties, or groups of bordering counties. The areas are grouped together in each state using census data such as total land area, population counts, large metropolitan areas, and natural barriers. Each sample unit contains at least 7,500 people and has a preferred maximum land area of 3,000 square miles. The next step divides the sample units into sampling strata. The data used to group the sampling strata includes census demographic data, American Community Survey data, and administrative crime data.
+  
+  The first stage occurs every ten years and is done using a linear programming algorithm. The second stage is a systematic random sample of housing units. Because NCVS is a continuing survey they didn't want to interview the same household indefinitely so they made a rotation scheme. The sample housing units are divided into six rotation groups. They are interviewed every six months for three and a half years. Within each six rotation groups there are six panels. A different panel is interviewed each month during the 6 month period. If a new household moved into a sample unit, the new members of that household were interviewed. 
+  
+  From the NCVS data sets we used the person record level data set which includes 270,566 cases and 429 variables, the household record level data set which includes 236,453 cases and 452 variables and the incident level data set which included 8,043 cases and 1496 variables. 
+  
+  From the person record level data set we used some of the victim's demographic variables from this data set. Specifically we used V3013 - AGE(ORIGINAL), V3020 - EDUCATION ATTAINMENT, V3023A - RACE RECORD(START 2003 Q1), V3024 - HISPANIC ORIGIN, V3072 - HAVE JOB OR WORK IN LAST 6 MONTHS, and V3017 - SEX(ORIGINAL). V3013 was originally in the form of a number 00 to 96, we broke these into 4 ranges so we could work with groups instead of individual ages. Our groups consisted of under 18, 18-34, 35-59, and over 60. V3020 had the grade that each person completed from never/kindergarten to grade 12 high school with or without diploma as well as college broken into 6 grades plus each possible degree including professional degree. We also spent time putting these educations into new groups which included no school/kindergarten, elementary level, high school level, some college, associate degree, bachelor degree, master degree, doctorate degree, and professional school. V3023A had race broken into 20 different possibilities. The single races were white, black, native, Asian, and Hawaiian/Pacific Islander. The rest were all mixed race which we made into a mixed race group and left the single races as is. V3024 had yes and no as the option for if a person was Hispanic or not. V3072 had the option of yes or no for if the person worked in the last 6 months, which we used for employment status. V3017 gave the option of male or female for the person's sex. Each one of these variables also had the option for residue and out of universe which we treated as NA since they didn't give us any information about the victims' demographics. Residue meant that there was a keying error, an incorrect or unusable answer was given by respondent, or there was an absence of entry for a question that should have been asked. Out of Universe meant that entry/answer was outside of the applicable range or universe of a question. 
+  
+  From the household record level data set we used the variable V2026 - HOUSEHOLD INCOME. This variable broke household income into 18 groups;\$10,000 to \$12,499, \$12,500 to \$14,999, \$15,000 to \$17,499, \$17,500 to \$19,999, \$20,000 to \$24,999, \$25,000 to \$29,999, \$30,000 to \$34,999, \$35,000 to \$39,999, \$40,000 to \$49,999, \$50,000 to \$74,999, \$75,000 to \$99,999, \$100,000 to \$149,999, \$150,000 to \$199,999, and over \$200,000. This variable also includes residue and out of universe and was treated like mentioned above since it told us nothing about the victims' demographics. We broke this down into 3 groups instead of 18. They include low income, middle income, and high income. Low income was under \$50,000. The middle income was \$50,000 to \$150,000. High income was over \$150,000.
+  
+  From the incident level data set we used the series of variables that told us what crimes happened; V4059-V4107. These variables break down all the crimes into very specific categories like attempted attack with weapon other than gun/knife/sharp weapon or verbal threat of sexual assault other than rape. The answers for these variables are no, yes, residue, and out of universe. We worked on making our own incident variable that took these specific incidents and put them in categories like personal or property crimes so it was easier to work with. From this data set we also used the variable V4399 - REPORTED TO POLICE which included yes, no, don't know, residue, and out of universe as possible answers. 
+  
+  We also used the variables IDHH and IDPER to join our used variable from each data set that we used. IDHH is a unique number given to each household and IDPER is a unique number given to each person in the data sets. IDPER is how we were able to include the demographics of each person to the incident(s) that happened to them. And IDHH was how we were able to assign the household income to each person and incident. We also utilized the year and quarter (YEARQ) of the interviews as some participant had reported an incident in their both of their biannual check-ins. The 2018 NCVS data set followed the same structure and variable names, so we applied a similar joining process, however, we were unable to join the 2020 and 2018 data together due to the absence of a shared primary key. 
+  
+  The way the data was recorded was disorderly and often varied depending on the number of potential responses. Some variables, like the type of crime, were divided into multiple columns as binary questions, while others like household income and age presented an excessive array of answer choices that were rarely selected by interviewees. For the former type of variable, we utilized the pivot_longer() function to transform column names into entries. The latter required extensive if statements and cut points to group infrequently chosen options into larger categories. This aggregation increased the total number of responses in this group, providing a more sizable sample for meaningful analysis. Many inputs were also recorded in a format unsuitable for our purposes; we used the str_replace() function to remove unnecessary characters and spaces from these entries. Since the same data tidying process would be applied to the 2018 data sets, we developed a function capable of automatically implementing these data cleaning steps on the input data frames. 
+  
+  After cleaning and joining data, we used chi square test and proportion test to determine the significance of each demographic in relationship with whether the incident was reported.  
+  
+  These two tests are statistical methods used to determine if there is a significant relationship between two categorical variables. It can be employed to assess whether there is a significant association between these variables and their proportions. We created cross-tabulations of the reported/non-reported incidents and age groups by selecting only Report/Not_report records and the demographic of interest from the data. We also filtered meaningful data by excluding “NA,” “Residue,” and “Out of universe” observation. The tables have rows representing observations and columns representing the reported/non-reported incidents and the demographic groups. 
+    
+  To perform the chi-square test, we used the chisq.test() function on the contingency table. To perform the proportion test, we used the prop.test() function on the contingency table. Both tests assume the independence of observations and the chi square expects cell frequency of at least 5, thus, violations of these assumptions may affect the validity of the test results. Based on the obtained p-value, we compared it to a significance level (e.g., 0.05) to determine if there is a statistically significant relationship between reported/non-reported incidents.  
+
+## Results
+
+```{r, include=FALSE, warning=FALSE}
+### FUNCTION TO CREATE GRAPH SECTIONS ON SAME SCALE
+
+# xVar = what demographic (i.e. "Race")
+# filtVar = what option within that demographic as spelled in the df (i.e. "Asian")
+# label = what to manually label the x axis (i.e. "Asian")
+# yaxis = T/F variable for if that section should have a yaxis (i.e. TRUE)
+# legend = T/F variable for if that section should have a legend (i.e. FALSE)
+graph_prop <- function(year, xVar, filtVar, label, yaxis, legend){
+  
+  ifelse(year==2020, 
+         temp <- incidents_and_demographics_20,
+         temp <- incidents_and_demographics_18
+  )
+  
+  xVar <- enquo(xVar)
+
+  temp %>% 
+    select(xVar = !!xVar, ReportedToPolice) %>% 
+    filter(xVar == filtVar) %>% 
+    ggplot(aes(x=factor(xVar), fill=ReportedToPolice)) +
+    geom_bar(stat = "count", position = "dodge", width = 1) +
+    scale_fill_manual(name = "Reported", values=c(rep_col, nonrep_col)) +
+    labs(x = label,
+         y = "Number of Incidents") +
+    theme(plot.title = element_text(hjust = 0.5),
+          axis.text.x = element_blank()) +
+    {if(yaxis == FALSE) theme(axis.title.y = element_blank(),
+                              axis.text.y = element_blank(),
+                              axis.ticks.y = element_blank())
+      } +
+    {if(legend == FALSE) guides(fill=FALSE)} +
+    geom_text(
+    stat = "count",
+    aes(y = after_stat(count),
+        label = after_stat((percent(round( count / sum(count) , 3))))
+        ),
+    position = position_dodge(width = 1),
+    fontface = "bold",
+    vjust = -.5
+    )
+}
+
+```
+
+  First we will discuss the findings of the first part of our research question. For this we looked how certain factors contributed to non-reporting of crimes. All of these were obtained using the chi-squared method. The larger the chi-squared (X-squared) value, the greater the probability that there really is a significant difference. A statistically significant test result (P <= 0.05) means that the test hypothesis (no difference in non-reporting) is false or should be rejected. A p-value greater than 0.05 means that no effect was observed. 
+  
+### Sex
+
+  The sex factor was broken up into male and female. We got the following results: 
+  
+```{r, eval=FALSE, echo=FALSE, warning=FALSE, fig.show='hold', fig.align='center', out.width = '45%'}
+### SEX GRAPHS
+
+# 2018
+sex_report_prop_18 <- graph_prop(2018, "Sex", "Male", "Male", TRUE, FALSE) +
+  graph_prop(2018, "Sex", "Female", "Female", FALSE, TRUE) &
+  plot_annotation(title = "2018 Crime Report Rate by Sex",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,20000))
+sex_report_prop_18
+
+# 2020
+sex_report_prop_20 <- graph_prop(2020, "Sex", "Male", "Male", TRUE, FALSE) +
+  graph_prop(2020, "Sex", "Female", "Female", FALSE, TRUE) &
+  plot_annotation(title = "2020 Crime Report Rate by Sex",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,20000))
+sex_report_prop_18
+
+```
+2018: X-squared = 0.91394, df = 1, p-value = 0.3391
+
+2020: X-squared = 2.2248, df = 1, p-value = 0.1358
+
+  We did not see sex play an important role in non-reporting of crimes. 
+
+
+### Age
+
+  With age as a non-reporting factor we broke our groups into: under 18, 18-34, 35-59, and over 60. We got the following results: 
+  
+```{r, echo=FALSE, warning=FALSE, fig.show='hold', fig.align='center', out.width = '45%'}
+### AGE GRAPHS
+
+# 2018
+age_report_prop_18 <- graph_prop(2018, "AgeRange", "under 18", "Under 18 years old", TRUE, FALSE) +
+  graph_prop(2018, "AgeRange", "18-34", "18-34 years old", FALSE, TRUE) +
+  graph_prop(2018, "AgeRange", "35-59", "35-59 years old", TRUE, FALSE) +
+  graph_prop(2018, "AgeRange", "60 and up", "60+ years old", FALSE, FALSE) &
+  plot_annotation(title = "2018 Crime Report Rate by Age Range",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,12000))
+age_report_prop_18
+
+
+# 2020
+age_report_prop_20 <- graph_prop(2020, "AgeRange", "under 18", "Under 18 years old", TRUE, FALSE) +
+  graph_prop(2020, "AgeRange", "18-34", "18-34 years old", FALSE, TRUE) +
+  graph_prop(2020, "AgeRange", "35-59", "35-59 years old", TRUE, FALSE) +
+  graph_prop(2020, "AgeRange", "60 and up", "60+ years old", FALSE, FALSE) &
+  plot_annotation(title = "2020 Crime Report Rate by Age Range",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,12000))
+age_report_prop_20
+
+```
+2018: X-squared = 66.086, df = 3, p-value = **2.938e-14**
+
+2020: X-squared = 18.048, df = 3, p-value = **0.00043**  
+
+  In 2018, 78.4% of people under 18 did not report crimes. Those 18-34 didn't report crimes 64.4% of the time. Those 35-59 didn't report 61.3% of the time. Those over 60 didn't report 62.9% of the time. In 2020 we saw similar results; under 18 - 75.5% non-reporting, 18 to 34 - 64.4% non-reporting, 35 to 59 - 63.2% non-reporting, and 60+ - 64.4% non-reporting. Here we see that there was a significant difference in non-reporting when age is considered as a factor. 
+
+### Race
+
+  Looking at race next we have our groups broken into 2+ races, Native, Islander, Asian, Black, and White as a factor in non-reporting we got: 
+  
+```{r, echo=FALSE, warning=FALSE, fig.show='hold', fig.align='center', out.width = '45%'}
+### RACE GRAPHS
+
+# 2018
+race_report_prop_18 <- graph_prop(2018, "Race", "White", "White", TRUE, FALSE) +
+  graph_prop(2018, "Race", "Black", "Black", FALSE, FALSE) +
+  graph_prop(2018, "Race", "Asian", "Asian", FALSE, TRUE) + 
+  graph_prop(2018, "Race", "Am Ind/AK native", "Am Ind/AK native", TRUE, FALSE) + 
+  graph_prop(2018, "Race", "Hawaiian/Pacific IS", "Hawaiian/Pacific IS
+", FALSE, FALSE) + 
+  graph_prop(2018, "Race", "2+ Races", "2+ Races", FALSE, FALSE) +
+  plot_annotation(title = "2018 Crime Report Rate by Race",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,20000))
+race_report_prop_18
+
+# 2020
+#race_report_prop_20 <- graph_prop(2020, "Race", "White", "White", TRUE, FALSE) +
+#  graph_prop(2020, "Race", "Black", "Black", FALSE, FALSE) +
+#  graph_prop(2020, "Race", "Asian", "Asian", FALSE, TRUE) + 
+#  graph_prop(2020, "Race", "Am Ind/AK native", "Am Ind/AK native", TRUE, FALSE) + 
+#  graph_prop(2020, "Race", "Hawaiian/Pacific IS", "Hawaiian/Pacific IS
+#", FALSE, FALSE) + 
+#  graph_prop(2020, "Race", "2+ Races", "2+ Races", FALSE, FALSE) +
+#  plot_annotation(title = "2020 Crime Report Rate by Race",
+#                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+#  scale_y_sqrt(limits= c(0,20000))
+#race_report_prop_20
+
+```
+2018: X-squared = 15.262, df = 5, p-value = **0.03279**
+
+2020: X-squared = 5.5135, df = 5, p-value = 0.3565
+
+  Here we see that in 2018 race did play a significant roll in non-reporting. Mixed race victims didn't report 68.8% of the time. Natives didn't report 72.2% of the time. Islanders 69.7% of the time. Asians 63.7% of the time. Blacks 61.3% of the time. And white didn't report crimes 63.4% of the time.
+
+### Ethnicity
+
+  When it came ethnicity we got the following results for non-reporting: 
+  
+```{r, echo=FALSE, warning=FALSE, fig.show='hold', fig.align='center', out.width = '45%'}
+### ETHNICITY GRAPHS
+
+# 2018
+ethnic_report_prop_18 <- graph_prop(2018, "Hispanic", "Yes", "Hispanic", TRUE, FALSE) +
+  graph_prop(2018, "Hispanic", "No", "Non-Hispanic", FALSE, TRUE) &
+  plot_annotation(title = "2018 Crime Report Rate by Ethnicity",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,20000))
+ethnic_report_prop_18
+
+# 2020
+#ethnic_report_prop_20 <- graph_prop(2020, "Hispanic", "Yes", "Hispanic", TRUE, FALSE) +
+#  graph_prop(2020, "Hispanic", "No", "Non-Hispanic", FALSE, TRUE) &
+#  plot_annotation(title = "2020 Crime Report Rate by Ethnicity",
+#                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+#  scale_y_sqrt(limits= c(0,20000))
+#ethnic_report_prop_20
+
+```
+2018: X-squared = 3.8712, df = 1, p-value = **0.04912**  
+
+2020: X-squared = 1.5610, df = 1, p-value = 0.2115
+
+  This was a yes or no group. Here we see that in 2018 we see that Hispanic ethnicity did have a significance in non-reporting. We saw that 63.1% of the time non-Hispanic victims didn't report crimes versus 65.8% of Hispanics didn't. 
+
+
+### Highest Education Level
+  
+  Looking at education level as a factor gave us the following results:2018: 
+  
+```{r, echo=FALSE, warning=FALSE, fig.show='hold', fig.align='center', out.width = '45%'}
+### EDUCATION LEVEL GRAPHS
+
+# 2018
+edu_report_prop_18 <- graph_prop(2018, "EducationLevel", "Elementary", "Elementary", TRUE, FALSE) + 
+  theme(axis.title.y = element_blank()) +
+  graph_prop(2018, "EducationLevel", "High", "High School", FALSE, FALSE) + 
+  graph_prop(2018, "EducationLevel", "Some College", "Some College", FALSE, FALSE) +
+  graph_prop(2018, "EducationLevel", "Associate", "Associates Degree", TRUE, FALSE) +
+  graph_prop(2018, "EducationLevel", "Prof", "Prof School Degree", FALSE, FALSE) +
+  graph_prop(2018, "EducationLevel", "Bachelor", "Bachelors Degree", FALSE, TRUE) +
+  graph_prop(2018, "EducationLevel", "Master", "Masters Degree", TRUE, FALSE) +
+  theme(axis.title.y = element_blank()) +
+  graph_prop(2018, "EducationLevel", "Doctorate", "Doctorate", FALSE, FALSE) +
+  graph_prop(2018, "EducationLevel", "Never attended school", "Never attended", FALSE, FALSE) &
+  plot_annotation(title = "2018 Crime Report Rate by Highest Educational Attainment",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,15000))
+edu_report_prop_18
+
+# 2020
+edu_report_prop_20 <- graph_prop(2020, "EducationLevel", "Elementary", "Elementary", TRUE, FALSE) + 
+  theme(axis.title.y = element_blank()) +
+  graph_prop(2020, "EducationLevel", "High", "High School", FALSE, FALSE) + 
+  graph_prop(2020, "EducationLevel", "Some College", "Some College", FALSE, FALSE) +
+  graph_prop(2020, "EducationLevel", "Associate", "Associates Degree", TRUE, FALSE) +
+  graph_prop(2020, "EducationLevel", "Prof", "Prof School Degree", FALSE, FALSE) +
+  graph_prop(2020, "EducationLevel", "Bachelor", "Bachelors Degree", FALSE, TRUE) +
+  graph_prop(2020, "EducationLevel", "Master", "Masters Degree", TRUE, FALSE) +
+  theme(axis.title.y = element_blank()) +
+  graph_prop(2020, "EducationLevel", "Doctorate", "Doctorate", FALSE, FALSE) +
+  graph_prop(2020, "EducationLevel", "Never attended school", "Never attended", FALSE, FALSE) &
+  plot_annotation(title = "2020 Crime Report Rate by Highest Educational Attainment",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,15000))
+edu_report_prop_20
+```
+X-squared = 38.833, df = 8, p-value = **5.279e-6**  
+
+2020: X-squared = 26.3, df = 8, p-value = **0.0009329**
+
+  Here we saw that education level does play a significant role in non-reporting. Our groups were broken into no school/kindergarten, elementary school, high school, some college, Associate, Bachelor, Master, Doctorate, and professional school. The non-reporting results for 2018 were 57.1%, 75.9%, 62.9%, 64%, 63.3%, 61.3%, 63.1%, 59.9%, and 65.4% respectively. And the non-reporting results for 2020 were 55.6%, 75.3%, 61.8%, 64.3%, 63.4%, 65.9%, 65.9%, 63.2%, and 59.5% respectively. 
+  
+### Employment Status
+  
+  With employment our groups were either employed or not employed. We got the following results:
+
+```{r, echo=FALSE, warning=FALSE, fig.show='hold', fig.align='center', out.width = '45%'}
+### EMPLOYMENT GRAPHS
+
+# 2018
+employ_report_prop_18 <- graph_prop(2018, "EmployedLast6Months", "Yes", "Employed", TRUE, FALSE) + 
+  graph_prop(2018, "EmployedLast6Months", "No", "Unemployed", FALSE, TRUE) &
+  plot_annotation(title = "2018 Crime Report Rate by the Victim's Employment Status in the Last 6 Months",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,10000))
+employ_report_prop_18
+
+
+# 2020
+employ_report_prop_20 <- graph_prop(2020, "EmployedLast6Months", "Yes", "Employed", TRUE, FALSE) + 
+  graph_prop(2020, "EmployedLast6Months", "No", "Unemployed", FALSE, TRUE) &
+  plot_annotation(title = "2020 Crime Report Rate by the Victim's Employment Status in the Last 6 Months",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,10000))
+employ_report_prop_20
+
+```
+
+2018: X-squared = 6.5252, df = 1, p-value = **0.01064**
+  
+2020: X-Squared = 5.8911, df = 3, p-value = **0.01522**
+
+  Here was saw that employment did play a role in non-reporting. In 2018, we saw that of those not employed did not report 63.2% of the time and those employed did not report 68.6% of the time. In 2020, we saw that 65.5% of those unemployed didn't report versus those employed not reporting at a 59.7% rate. 
+  
+
+### Income Class
+  
+  We broke household income down into 3 groups of low income, middle income, and high income. Low income was under \$50,000. The middle income was \$50,000 to \$150,000. High income was over \$150,000. Using household income as a factor for non-reporting, we got these results:
+  
+```{r, eval = FALSE, echo=FALSE, warning=FALSE}
+### HOUSEHOLD INCOME GRAPHS
+
+# 2018
+income_report_prop_18 <- graph_prop(2018, "HHIncomeRange", "Low", "Low (<$50k)", TRUE, FALSE) + 
+  graph_prop(2018, "HHIncomeRange", "Middle", "Middle ($50k-150k)", FALSE, FALSE) + 
+  graph_prop(2018, "HHIncomeRange", "High", "High (>$150k)", FALSE, TRUE) &
+  plot_annotation(title = "2018 Crime Report Rate by Household Income",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,12000))
+income_report_prop_18
+
+# 2020
+income_report_prop_20 <- graph_prop(2020, "HHIncomeRange", "Low", "Low (<$50k)", TRUE, FALSE) + 
+  graph_prop(2020, "HHIncomeRange", "Middle", "Middle ($50k-150k)", FALSE, FALSE) + 
+  graph_prop(2020, "HHIncomeRange", "High", "High (>$150k)", FALSE, TRUE) &
+  plot_annotation(title = "2020 Crime Report Rate by Household Income",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,12000))
+income_report_prop_20
+```
+2018: X-squared = 3.9831, df = 2, p-value = 0.1365
+
+2020: X-squared = 0.27968, df = 2, p-value = 0.8695
+
+  We didn't see household income play a role in non-reporting. 
+
+#### Type of Crime
+  
+  Lastly we looked at types of crime. We broke the crimes down into 3 groups: personal, property, and other. Personal crime includes sexual assault, abusive language, and verbal harassment. Property crime encompasses theft, property damage, and forcible entry into the victims' homes or cars. The "other" category includes everything else. We got the following results from our chi-square test: 
+
+```{r, echo=FALSE, warning=FALSE}
+### CRIME GRAPHS
+
+# 2018
+crime_report_prop_18 <- graph_prop(2018, "TypeOfCrime", "Personal", "Personal", TRUE, FALSE) + 
+  graph_prop(2018, "TypeOfCrime", "Property", "Property", FALSE, FALSE) + 
+  graph_prop(2018, "TypeOfCrime", "OtherCrime", "Other", FALSE, TRUE) &
+  plot_annotation(title = "2018 Crime Report Rate by Type of Crime",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,1000))
+crime_report_prop_18
+
+# 2020
+crime_report_prop_20 <- graph_prop(2020, "TypeOfCrime", "Personal", "Personal", TRUE, FALSE) + 
+  graph_prop(2020, "TypeOfCrime", "Property", "Property", FALSE, FALSE) + 
+  graph_prop(2020, "TypeOfCrime", "OtherCrime", "Other", FALSE, TRUE) &
+  plot_annotation(title = "2020 Crime Report Rate by Type of Crime",
+                  theme = theme(plot.title = element_text(hjust = 0.5))) & 
+  scale_y_sqrt(limits= c(0,1000))
+crime_report_prop_20
+```
+2018: X-squared = 17.314, df = 2, p-value = **0.0001739**
+
+2020: X-squared = 10.241, df = 2, p-value = **0.005973**
+
+  The results showed us that the type of crime does play a significant role in non-reporting of crimes. In 2018, personal crimes were not reported 37% of the time. Property crimes went without report 66.6% of the time. Those crimes in the other category were not reported 57% of the time. In 2020 we saw similar results with 38.9%, 65.7%, and 55.4% respectively. 
+  
+  All of these results and more are shown in the table below.
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE, out.width="90%", fig.align="center"}
+knitr::include_graphics("FactorsTable.png")
+```
+  
+  The next part of our non-reporting crime analysis looked at changes over the years instead of the groups. We were focusing on pre-COVID data (2018) versus COVID era data (2020). Here we used the proportion test to get our results. Overall for non-reporting rates for 2018 versus 2020, 63.5% of crimes were not reported in 2018 and 63.4% of crimes were not reported in 2020. The chi-squared test gave us a X-Squared of 0.01797 and a P-Value of 0.8934 with 1 degree of freedom. So the non-reporting rates tended to stay the same over the two years. We ended up finding three significant changes in non-reporting from 2018 to 2020. This was within the black community, the group with a bachelor degree, and those that are currently employed. 
+  
+  Within the black community, in 2018 61.3% of victims did not report crimes that happened to them. But in 2020 that number increased to 66.3% not reporting. That is a change of 5% and resulted in the p-value of 0.016.
+  
+  Within the group of subjects with bachelor degrees we saw that in 2018 61.3% were non-reporters but in 2020 that increased to 65.9%. That is an increase of 4.6% and resulted in a p-value of 0.004841.
+  
+  Within the employed group, in 2018 68.6% of people did not report crimes. But in 2020 that number decreased to 59.7%. This means that 8.9%  more of employed victims reported crimes in 2020. This change resulted in a p-value of 0.002282. 
+  
+  All of these results and more can be found below. 
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE, out.width="70%", fig.align="center"}
+knitr::include_graphics("Table1.png")
+knitr::include_graphics("Table2.png")
+```
+
+## Discussion
+
+  Do certain factors contribute to the non-reporting rates of crimes and has COVID changed these factors? From our data it would seem that there are some factors that contribute to non-reporting. And that there were some significant changes in the COVID years.
+  
+# Maybe we can tie in the reasons why people didn't report. The top 5 reasons were the same in 2018 & 2020.
+
+```{r, echo=FALSE, warning=FALSE}
+### TABLE OF THE TOP 5 MOST IMPORTANT REASONS WHY PEOPLE CHOSE NOT TO REPORT IN 2018 & 2020
+
+# 2018
+reason_not_report_18 <- incidents_and_demographics_18 %>%
+  group_by(NR_MostImportantNotReport) %>% 
+  summarise(count = n())%>% 
+  drop_na()%>% 
+  mutate(prop = count/sum(count)) %>% 
+  arrange(desc(prop)) %>% 
+  head(5)
+
+# 2020
+reason_not_report_20 <- incidents_and_demographics_20 %>%
+  group_by(NR_MostImportantNotReport) %>% 
+  summarise(count = n())%>% 
+  drop_na()%>% 
+  mutate(prop = count/sum(count)) %>% 
+  arrange(desc(prop)) %>% 
+  head(5)
+
+reason_not_report_table <- matrix(c(percent(reason_not_report_18$prop), 
+                                    percent(reason_not_report_20$prop)),
+                                  ncol=2, nrow = 5, byrow=TRUE
+                                  )
+colnames(reason_not_report_table) <- c("2018 Prop", "2020 Prop")
+rownames(reason_not_report_table) <- c("Minor, unsuccessful crime", "Thought that the police wouldn't think it's important enough", "Reported the crime to a different official", "Concerned a personal matter or was taken care of privately", "Could not identify the offender or there was a lack of proof")
+
+reason_not_report_table <- as.table(reason_not_report_table)
+
+reason_not_report_table
+
+```
+  
+  Looking at the results from above we saw that education, age, and type of crime played a significant role in not reporting a crime. It seems that with education, those with lower amounts of education consistently reported crimes less often. Over both years we saw that those that stopped school at an elementary level had a non-reporting rate of over 75%. This is 9.4% higher than the next highest non-reporting group which is the Bachelors and Masters level of 2020. And we believe that Bachelors and Masters were only that high in 2020 because of social justice issues we will discuss in more further in our report. Overall it seems less education means higher non-reporting. This might have to do with the environment that lower educated people live in and the trust issues that come from authority's judgement of that. 
+  
+  Age was another constant factor that we saw in non-reporting rates. The younger group, ages under 18, seem to always report less than other groups. Both in 2018 and 2020 we saw that teens were over 75% non-reporters. The other groups were under 65% for non-reporting. This probably has to do with the fact that younger people have factors in their lives that older people do not. They have anxieties and don't know procedures and how to take care of more "grown up" issues. They also might feel like they could get in trouble for being involved in a crime, if not by authorities then by their parents. 
+  
+  We also saw that over the years the type of crime was a big key factor in non-reporting. Property crime consistently had a non-report rate of over 65% and personal crimes consistently had a non-report rate of under 40%. We believe that this has to do with the fact that with property crime the victim isn't always aware of the crime immediately because they are not there. Where as with personal crimes that victim is always present. People also tend to value their person and other people more than property.
+  
+  An interesting result that we noticed was that employment status was another factor that was both significant in non-reporting but changed over the years. In 2018, those people that were employed reported less often than those that were unemployed. But in 2020 that changed. Employed people started to report crimes more often. Their non-reporting rate decreased by 8.9%. This may be one of the non-reporting factors that COVID had an effect on. We did see that the change from 2018 to 2020 was a significant one in our results section. One of the reasons we think this change my have happened was because many people, besides first responders ended up working from home. Most crimes seem to happen at home and this would mean more people would be at the place of the crime happening during working hours and because of quarantines.
+  
+  As for race and ethnicity, we found in 2018 these were significant in non-reporting rates but where not in 2020. But from our year-to-year proportions test this was not a significant change over time, except for the black community. 
+  
+  As mentioned above, besides employment status, there was a significant difference in non-reporting rates in the education group that had bachelor degrees and within the black community over time. Both started reporting crimes less often. Even though this happen during the COVID era we do not believe this has to do with COVID but instead has to do with the Black Lives Matter movement that hit its peak during the COVID era. There was a huge issue with social injustice towards the black and colored community when it came to people of authority like the police. Black people were not being treated fairly and sometimes even outright wronged by the police force. So of course this would cause a shift in the black community to not want to report crimes to the police. Also those that tend to be more educated also seem to be more in-tune with what is going on in the world. So we believe that graduates were more aware of the social justice issue of 2020 and in support also reported less crimes to the police. 
+  
+# We can use these tables as evidence potentially
+```{r, echo=FALSE, warning=FALSE}
+### TABLE OF THE TOP 5 MOST IMPORTANT REASONS WHY PEOPLE CHOSE TO REPORT IN 2018
+
+# 2018
+reason_report_18 <- incidents_and_demographics_18 %>%
+  group_by(R_MostImportantReport) %>% 
+  summarise(count = n())%>% 
+  drop_na()%>% 
+  mutate(prop = count/sum(count)) %>% 
+  arrange(desc(prop)) %>% 
+  head(5)
+
+reason_report_table_18 <- matrix(c(percent(reason_report_18$prop)), ncol=1, nrow = 5, byrow=TRUE)
+colnames(reason_report_table_18) <- c('Proportion')
+rownames(reason_report_table_18) <- c("Because it was a crime", "To recover property", "To stop or prevent this incident from happening", "To prevent further crimes from the offender against one's household", "Duty to tell the police")
+
+reason_report_table_18 <- as.table(reason_report_table_18)
+
+reason_report_table_18
+
+```
+  
+```{r, echo=FALSE, warning=FALSE}
+### TABLE OF THE TOP 5 MOST IMPORTANT REASONS WHY PEOPLE CHOSE TO REPORT IN 2020
+
+# 2020
+reason_report_20 <- incidents_and_demographics_20 %>%
+  group_by(R_MostImportantReport) %>% 
+  summarise(count = n())%>% 
+  drop_na()%>% 
+  mutate(prop = count/sum(count)) %>% 
+  arrange(desc(prop)) %>% 
+  head(5)
+
+reason_report_table_20 <- matrix(c(percent(reason_report_20$prop)), ncol=1, nrow = 5, byrow=TRUE)
+colnames(reason_report_table_20) <- c('Proportion')
+rownames(reason_report_table_20) <- c("Because it was a crime", "To recover property", "To stop or prevent this incident from happening", "To prevent further crimes from the offender against one's household", "To stop this offender from committing more crimes ")
+
+reason_report_table_20 <- as.table(reason_report_table_20)
+
+reason_report_table_20
+
+
+```
+
+  There were some limitations that we had to deal with. The first was timing and the sheer size of the NCVS data sets. It took us weeks to just figure out what this data was telling us and where we could go with it. We went down a lot of rabbit holes that lead nowhere. Our data sets included a lot of NA like variable entries that we had to filter out. We also dealt with small sample sizes for some of the demographics and factors we wanted to look at. The data sets lacked a lot of the information we would have like to have seen to do some more in depth analysis and visualizations, such as location and qualitative data. 
